@@ -15,13 +15,21 @@ on_time     1200
 
 =cut
 
+#my %gets = (  # NameOFCommand =>  StyleMod for Fhemweb, SubToCall if get is executed, String to send to uC, sub called with response, regex to verify response,
 my %BadLuefter_gets = (
-    "whatyouwant"    => "can't",
-    "whatyouneed"    => "try sometimes",
-    "satisfaction"  => "no"
+    HumidityDevice => "HumidityDevice:noArg",
+    HumidityReading => "HumidityReading:noArg",
+    SwitchDevice => "SwitchDevice:noArg",
+    Interval => "Interval:noArg",
+    ValueList => "ValueList:noArg" 
 );
 
 my @ValueList = (); #global #empty list of values
+
+sub doLog($){
+    my $msg=shift;
+    Log3 "BadLuefter", 4, $msg;
+}
 
 sub getTrend{
     my @aref=@{$_[0]};
@@ -52,7 +60,7 @@ sub getTrend{
       $direction = 0
          if ( $hTrend == 0 );
     }
-    return $hTrend;
+    return $direction;
 }
 
 # add new value and return trend
@@ -70,7 +78,36 @@ sub addToList($){
     my $list = join(", ", @ValueList);
     Log3 "BadLuefter", 4, ": addToList $v. List=$list";
     
-    return $trend; # aöso returns 0 if cnt <9
+    return $trend; # also returns 0 if cnt <9
+}
+
+#get current interval either by internal or via attribute
+sub getInterval($){
+    my $hash = shift;
+    #try attr first
+    my $name=$hash->{NAME};
+    my $intVal=$attr{$name}{Interval};
+    Log3 $name, 4, "getInterval: Interval ist $intVal";
+    if(defined ($intVal)){
+        return $intVal;
+    }else{
+        my $intVal = $hash->{Interval};
+        #get internal interval
+        if (! $intVal ) {
+##            $hash->{Interval}=60;
+##            $intVal=$hash->{Interval};
+        }
+        return $intVal;
+    }
+    return 60; #default
+}
+
+sub setInterval($$){
+    my ($hash, $value) = @_;
+    my $name=$hash->{NAME};
+    $attr{$name}{Interval}=$value;
+    Log3 $name, 4, "setInterval: Interval ist $value";
+##    $hash->{Interval}=$value;
 }
 
 sub BadLuefter_Initialize {
@@ -85,10 +122,11 @@ sub BadLuefter_Initialize {
     $hash->{NotifyFn}     = \&BadLuefter_Notify;
     $hash->{GetUpdateFn}     = \&BadLuefter_GetUpdate;
     
-    $hash->{AttrList} = "humidity_device humidity_name interval on_time verbose switch_device" . $readingFnAttributes;
+    $hash->{AttrList} = "humidity_device Interval on_time verbose " . $readingFnAttributes;
         
     my $inter = 12; # 60 sekunden
-    $hash->{Interval} = $inter; # für die instanz speichern
+##    $hash->{Interval} = $inter; # für die instanz speichern
+    $hash->{ValueList}=join(", ", @ValueList);
 }
 
 # we need an input evice to read the humidity from or a notify
@@ -100,15 +138,20 @@ sub BadLuefter_Define {
     if(int(@param) < 5) {
         return "too few parameters: define <name> BadLuefter <Humidity_Device> <Humidity_Name> <Switch_Device>";
     }
+    my $name=$defs{$hash}->{NAME};
+#    Log3 $name, 4, "attr HumidityDevice set to $param[2]";
+    #$attr{$name}->{HumidityDevice} = $param[2];
+#    fhem ("attr $name HumidityDevice $param[2]");
     
+    #internals
     $hash->{HumidityDevice}  = $param[2];
     $hash->{HumidityReading}  = $param[3];
     $hash->{SwitchDevice} = $param[4];
 
-    if (! $hash->{Interval} ) {
-        $hash->{Interval}=60;
-    }
-    
+##    if (! $hash->{Interval} ) {
+##        $hash->{Interval}=60;
+##    }
+    setInterval($hash, 60);  
     return ;
 }
 
@@ -126,16 +169,27 @@ sub BadLuefter_GetUpdate($) {
     my $value=$hashHumDevice->{READINGS}{$humReading}{VAL};
     my $trend = addToList($value);
     Log3 $name, 4, "GetUpdate: trend=$trend";
+
+    #update Reading
+    my $rv = readingsSingleUpdate($hash, "ValueList", join(", ", @ValueList), 1);
+    #TODO get onstatus
+    my $onStatus = ReadingsVal($hash->{SwitchDevice}, "state", "na"); # $hashSwitchDevice->{READINGS}{state};
+    #update Reading
+    $rv = readingsSingleUpdate($hash, "state", $onStatus, 1);
+    $hash->{STATE}=$trend;
+    
     if($trend >0){
         #set-on-for-timer...
         if($hashSwitchDevice->{READINGS}{state} eq "off"){
             Log3 $name, 4, "BadLuefter_GetUpdate: switch on-for-tmer $switchDev ...";
-            fhem("set $switchDev on-for-timer 300"); # 5 minuten
+            fhem("set $switchDev->{NAME} on-for-timer 300"); # 5 minuten
+            $rv = readingsSingleUpdate($hash, "state", "on", 1);
             @ValueList=(); #reset value list
         }
         else{
             Log3 $name, 4, "BadLuefter_GetUpdate: $switchDev is ON...";
         }
+
     }else{
         Log3 $name, 4, "GetUpdate trend<=0";
     }
@@ -143,7 +197,8 @@ sub BadLuefter_GetUpdate($) {
 	
 	# neuen Timer starten in einem konfigurierten Interval.
     RemoveInternalTimer( $hash );
-    InternalTimer( gettimeofday() + $hash->{Interval}, "BadLuefter_GetUpdate", $hash );
+##    InternalTimer( gettimeofday() + $hash->{Interval}, "BadLuefter_GetUpdate", $hash );
+    InternalTimer( gettimeofday() + getInterval($hash), "BadLuefter_GetUpdate", $hash );
 }
 
 sub BadLuefter_Undef {
@@ -155,68 +210,116 @@ sub BadLuefter_Undef {
 
 sub BadLuefter_Get {
     my ($hash, @param) = @_;
-    
+=pod
+    "HumidityDevice"    => "",
+    "HumidityReading"    => "",
+    "SwitchDevice"  => "",
+    "Interval"  => 60,
+    "ValList" => ""
+{Dumper $defs{badluefter} }
+$VAR1 = {
+          'STATE' => '???',
+          'SwitchDevice' => 'schalterbadfeuchte2',
+          'DEF' => 'HM_633ADB_Climate humidity schalterbadfeuchte2',
+          'Interval' => 60,
+          'TYPE' => 'BadLuefter',
+          'NR' => 107,
+          'NTFY_ORDER' => '50-badluefter',
+          'FUUID' => '6b042703-f33f-77f3-e3ec-892a0623886ea94b',
+          'HumidityDevice' => 'HM_633ADB_Climate',
+          'NAME' => 'badluefter',
+          'HumidityReading' => 'humidity'
+        };
+        
+for attributes use: 
+AttrVal(<devicename>,<attribute>,<defaultvalue>)
+Returns the attribute of a device 
+
+=cut    
     return '"get BadLuefter" needs at least one argument' if (int(@param) < 2);
     
     my $name = shift @param;
     my $opt = shift @param;
-    if(!$BadLuefter_gets{$opt}) {
-        my @cList = keys %BadLuefter_gets;
-        return "Unknown argument $opt, choose one of " . join(" ", @cList);
-    }
+    my $value = shift @param;# InternalVal($name, $opt, "");
+    Log3 $name, 4, "hash=$hash, name=$name, opt=$opt, value: " . $value;
+    # 2026.11.23 19:06:32 4: hash=HASH(0x562b6f394a38), name=badluefter, opt=HumidityDevice, Setting: HM_633ADB_Climate
+
+    return "\"get $name\" needs at least one argument" unless(defined($opt));
+
+    Log3 $name, 4, "_Get: name=$name, opt=$opt, return=$defs{$name}->{$opt}";
     
-    if($attr{$name}{formal} eq 'yes') {
-        return $BadLuefter_gets{$opt}.', sir';
+    return "Unknown argument $opt, choose one of ".
+    join ' ', sort values %BadLuefter_gets if !exists $BadLuefter_gets{$opt};
+
+    if($opt eq "ValueList"){
+        my $list=join(", ", @ValueList);
+        return "ValueList: $list";
     }
-    return $BadLuefter_gets{$opt};
+    return $defs{$name}->{$opt};
 }
 
 sub BadLuefter_Set($@)
 {
+=pod
+    "HumidityDevice"    => "",
+    "HumidityReading"    => "",
+    "SwitchDevice"  => "",
+    "Interval"  => 60,
+    "ValList" => ""
+=cut    
 	my ( $hash, $name, $cmd, @args ) = @_;
 	return "\"set $name\" needs at least one argument" unless(defined($cmd));
-
-	if($cmd eq "status")
-	{
-	   if($args[0] eq "up")
-	   {
-	      Log3 $name, 4, "BadLuefter_Set: GetUpdate cmd status up ...";
-	   }
-	   elsif($args[0] eq "down")
-	   {
-	      Log3 $name, 4, "BadLuefter_Set: GetUpdate cmd status down ...";
-	   }
-	   else
-	   {
-	      return "Unknown value $args[0] for $cmd, choose one of up down";
-	   }   
-	}
-    elsif($cmd eq "interval")
+    my $onStatus = ReadingsVal($hash->{SwitchDevice}, "state", "na"); # $hashSwitchDevice->{READINGS}{state};
+    Log3 $name, 4, "onStatus=$onStatus";
+    
+    if($cmd eq "Interval")
     {
         if($args[0] eq $args[0]+0){
-            $hash->{Interval}=$args[0]+0;
+##            $hash->{Interval}=$args[0];
+##            fhem ("attr $name Interval $args[0]");
+            setInterval($hash, $args[0]);
             RemoveInternalTimer( $hash );
-            InternalTimer( gettimeofday() + $hash->{Interval}, "BadLuefter_GetUpdate", $hash );
+##            InternalTimer( gettimeofday() + $hash->{Interval}, "BadLuefter_GetUpdate", $hash );
+            InternalTimer( gettimeofday() + getInterval($hash), "BadLuefter_GetUpdate", $hash );
+        }else{
+            return "Invalid value $args[0] for $cmd, choose a valid number of seconds.";
         }
     }
-	elsif($cmd eq "power")
+	elsif($cmd eq "HumidityDevice")
 	{
-	   if($args[0] eq "on")
+	   if(! $args[0] eq "")
 	   {
-	      Log3 $name, 4, "BadLuefter_Set: GetUpdate cmd power on ...";
+           my $test = $defs{$args[0]};
+           if(defined($test)){
+               $hash->{HumidityDevice}=$args[0];
+           }else{
+               return "device $args[0] is not defined";
+           }
 	   }
-	   elsif($args[0] eq "off")
-	   {
-	      Log3 $name, 4, "BadLuefter_Set: GetUpdate cmd power off ...";
-	   }  
 	   else
 	   {
-	      return "Unknown value $args[0] for $cmd, choose one of on off";
+	      return "Invalid value $args[0] for $cmd, choose existing device";
 	   }       
 	}
+    elsif ($cmd eq "HumidityReading"){
+	   if(! $args[0] eq "")
+	   {
+           $hash->{HumidityReading}=$args[0];   
+       }
+    }elsif ( $cmd eq "SwitchDevice" ){
+       my $test = $defs{$args[0]};
+       if(defined($test)){
+           $hash->{SwitchDevice}=$args[0];
+       }else{
+           return "device $args[0] is not defined";
+       }
+    }
+    elsif ($cmd eq "ValueList"){
+        return "ValueList can not be set directly";
+    }
 	else
 	{
-		return "Unknown argument $cmd, choose one of interval status power";
+		return "Unknown argument $cmd, choose one of HumidityDevice HumidityReading SwitchDevice "; ##Interval is in Attributes
 	}
 }
 
@@ -232,15 +335,13 @@ sub BadLuefter_Attr ($$$$) {
 #    Log3 $name, 4, "BadLuefter_Attr: attr liste =". $hash->{AttrList};
 
     if($cmd eq "set") {
-        if( index("humidity_device humidity_name interval on_time verbose switch_device" . $readingFnAttributes, $attr_name) ){
-            if($attr_name eq "interval"){
+        if( index("Interval on_time verbose" . $readingFnAttributes, $attr_name) ){
+            if($attr_name eq "Interval"){
                 if($attr_value eq $attr_value+0){ #is number?
-                   $hash->{Interval}=$attr_value+0;                    
-                }
-            }
-            elsif($attr_name eq "formal") {
-                if($attr_value !~ /^yes|no$/) {
-                    my $err = "Invalid argument $attr_value to $attr_name. Must be yes or no.";
+##                   $hash->{Interval}=$attr_value+0;
+                   setInterval($hash, $attr_value);    
+                }else{
+                    my $err = "Invalid argument $attr_value to $attr_name. Must be a number (seconds).";
                     Log3 $name, 4, "BadLuefter: ".$err;
                     return $err;
                 }
@@ -251,7 +352,6 @@ sub BadLuefter_Attr ($$$$) {
             }
         }
         else{
-            
             Log3 $name, 4, "BadLuefter_Attr: attribute not in list: $attr_name";
         }
     }
@@ -291,16 +391,13 @@ sub BadLuefter_State($$$$)
 {
 	my ( $hash, $time, $readingName, $value ) = @_;
 
+    my $hashSwitchDevice = $hash->{SwitchDevice};
+    my $switchState = $hashSwitchDevice->{READINGS}{state};
+    readingsSingleUpdate($hash, "state", $switchState, 1);
+    
 	return undef if($readingName eq "STATE" || $value ne "inactive");
-	readingsSingleUpdate($hash, "state", "inactive", 1);
+	my $rv = readingsSingleUpdate($hash, "state", "inactive", 1);
 	return undef;
-}
-
-sub myLog($){
-    my $msg=shift;
-    my ($hash) = @_;
-    my $name = $hash->{NAME};
-    Log3 $name, 3, "BadLuefter ($name) - $msg";
 }
 
 1;
