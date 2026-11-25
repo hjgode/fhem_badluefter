@@ -26,6 +26,9 @@ my %BadLuefter_gets = (
 
 my @ValueList = (); #global #empty list of values
 
+#should be used instead of getInterval()
+my $globalInterval=60;
+
 sub doLog($){
     my $msg=shift;
     Log3 "BadLuefter", 4, $msg;
@@ -91,13 +94,13 @@ sub getInterval($){
     if(defined ($intVal)){
         return $intVal;
     }else{
-        my $intVal = $hash->{Interval};
-        #get internal interval
-        if (! $intVal ) {
+##        my $intVal = $hash->{Interval};
+##        #get internal interval
+##        if (! $intVal ) {
 ##            $hash->{Interval}=60;
 ##            $intVal=$hash->{Interval};
-        }
-        return $intVal;
+##        }
+        return 60;
     }
     return 60; #default
 }
@@ -107,6 +110,8 @@ sub setInterval($$){
     my $name=$hash->{NAME};
     $attr{$name}{Interval}=$value;
     Log3 $name, 4, "setInterval: Interval ist $value";
+    $globalInterval=$value;
+    #update internal Interval
 ##    $hash->{Interval}=$value;
 }
 
@@ -124,9 +129,10 @@ sub BadLuefter_Initialize {
     
     $hash->{AttrList} = "humidity_device Interval on_time verbose " . $readingFnAttributes;
         
-    my $inter = 12; # 60 sekunden
+    my $inter = 60; # 60 sekunden
 ##    $hash->{Interval} = $inter; # für die instanz speichern
     $hash->{ValueList}=join(", ", @ValueList);
+    $globalInterval=60;
 }
 
 # we need an input evice to read the humidity from or a notify
@@ -170,20 +176,46 @@ sub BadLuefter_GetUpdate($) {
     my $trend = addToList($value);
     Log3 $name, 4, "GetUpdate: trend=$trend";
 
-    #update Reading
-    my $rv = readingsSingleUpdate($hash, "ValueList", join(", ", @ValueList), 1);
     #TODO get onstatus
     my $onStatus = ReadingsVal($hash->{SwitchDevice}, "state", "na"); # $hashSwitchDevice->{READINGS}{state};
+
+    readingsBeginUpdate($hash);
+    readingsBulkUpdate($hash, "trend", $trend, 1);
+    readingsBulkUpdate($hash, "ValueList", join(", ", @ValueList), 1);
+    readingsBulkUpdate($hash, "state", $onStatus, 1);
+    readingsEndUpdate($hash, 1);
+=pod    
+    #update trend
+    readingsSingleUpdate($hash, "trend", $trend, 1);
+    #update Reading
+    my $rv = readingsSingleUpdate($hash, "ValueList", join(", ", @ValueList), 1);
     #update Reading
     $rv = readingsSingleUpdate($hash, "state", $onStatus, 1);
-    $hash->{STATE}=$trend;
+    #update STATE
+    $hash->{STATE}=$onStatus;
+    Log3 $name, 4, "BadLuefter_GetUpdate: onStatus $onStatus ...";
+=cut
     
     if($trend >0){
         #set-on-for-timer...
-        if($hashSwitchDevice->{READINGS}{state} eq "off"){
-            Log3 $name, 4, "BadLuefter_GetUpdate: switch on-for-tmer $switchDev ...";
-            fhem("set $switchDev->{NAME} on-for-timer 300"); # 5 minuten
-            $rv = readingsSingleUpdate($hash, "state", "on", 1);
+        my $onTest = fhem ( '{ ReadingsVal("schalterbadfeuchte2", "state", "na") } ');
+        Log3 $name, 4, "ReadingsVal $switchDev ist $onTest ########";
+        
+        if($onTest eq "off"){
+            
+            Log3 $name, 4, "BadLuefter_GetUpdate: switch on-for-tmer $switchDev ...##########";
+            my $res = fhem("set $switchDev on-for-timer 300"); # 5 minuten
+            Log3 $name,4 ,"fhem set on-for-timer result=$res #########";
+            
+            #TODO: update state
+            Log3 $name, 4, "BadLuefter_GetUpdate: set state to on...";
+            readingsSingleUpdate($hash, "state", "on", 1);
+##            fhem("setreading $name state on");
+            
+            #set internal STATE
+##            $hash->{STATE} = "on";
+            readingsSingleUpdate($hash, "state", "on", 1);
+            
             @ValueList=(); #reset value list
         }
         else{
@@ -338,7 +370,7 @@ sub BadLuefter_Attr ($$$$) {
         if( index("Interval on_time verbose" . $readingFnAttributes, $attr_name) ){
             if($attr_name eq "Interval"){
                 if($attr_value eq $attr_value+0){ #is number?
-##                   $hash->{Interval}=$attr_value+0;
+##                   $hash->{Interval}=$attr_value;
                    setInterval($hash, $attr_value);    
                 }else{
                     my $err = "Invalid argument $attr_value to $attr_name. Must be a number (seconds).";
@@ -382,7 +414,8 @@ sub BadLuefter_Notify($$)
 
     if( ($devName eq "global") && ($event eq "INITIALIZED") ){
         Log3 $ownName, 4, "BadLuefter_Notify called for global:INITIALIZED";
-        InternalTimer( gettimeofday() + $own_hash->{Interval}, "BadLuefter_GetUpdate", $own_hash );
+##        InternalTimer( gettimeofday() + $own_hash->{Interval}, "BadLuefter_GetUpdate", $own_hash );
+        InternalTimer( gettimeofday() + getInterval($own_hash) , "BadLuefter_GetUpdate", $own_hash );
     }
   }
 }
