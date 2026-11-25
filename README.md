@@ -27,7 +27,7 @@ Unterstütze Set Befehle
     HumidityReading  setzt den Reading Namen der gelesen werden soll
     SwitchDevice  setzt den Namen des Schalter Devices
 
-## Atribute
+## Attribute
 
     Interval  Zeit Interval in Sekunde für die periodische Abfrage, Default=60 Sekunden = 1 Minute
     on_time  Zeitdauer, die der Lüfter eingeschaltet werden soll. Default=300 Sekunden = 5 Minuten

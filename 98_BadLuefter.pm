@@ -28,6 +28,7 @@ my @ValueList = (); #global #empty list of values
 
 #should be used instead of getInterval()
 my $globalInterval=60;
+my $globalOn_time=300;
 
 sub doLog($){
     my $msg=shift;
@@ -115,6 +116,16 @@ sub setInterval($$){
 ##    $hash->{Interval}=$value;
 }
 
+sub setOn_time($$){
+    my ($hash, $value) = @_;
+    my $name=$hash->{NAME};
+    $attr{$name}{on_time}=$value;
+    Log3 $name, 4, "setOn_time: on_time ist $value";
+    $globalOn_time=$value;
+    #update internal Interval
+##    $hash->{Interval}=$value;
+}
+
 sub BadLuefter_Initialize {
     my ($hash) = @_;
 
@@ -127,7 +138,7 @@ sub BadLuefter_Initialize {
     $hash->{NotifyFn}     = \&BadLuefter_Notify;
     $hash->{GetUpdateFn}     = \&BadLuefter_GetUpdate;
     
-    $hash->{AttrList} = "humidity_device Interval on_time verbose " . $readingFnAttributes;
+    $hash->{AttrList} = "Interval on_time verbose " . $readingFnAttributes;
         
     my $inter = 60; # 60 sekunden
 ##    $hash->{Interval} = $inter; # für die instanz speichern
@@ -204,7 +215,7 @@ sub BadLuefter_GetUpdate($) {
         if($onTest eq "off"){
             
             Log3 $name, 4, "BadLuefter_GetUpdate: switch on-for-tmer $switchDev ...##########";
-            my $res = fhem("set $switchDev on-for-timer 300"); # 5 minuten
+            my $res = fhem("set $switchDev on-for-timer $globalOn_time"); # 5 minuten
             Log3 $name,4 ,"fhem set on-for-timer result=$res #########";
             
             #TODO: update state
@@ -378,6 +389,16 @@ sub BadLuefter_Attr ($$$$) {
                     return $err;
                 }
             }
+            elsif($attr_name eq "on_time"){
+                if($attr_value eq $attr_value+0){ #is number?
+##                   $hash->{Interval}=$attr_value;
+                   setOn_time($hash, $attr_value);    
+                }else{
+                    my $err = "Invalid argument $attr_value to $attr_name. Must be a number (seconds).";
+                    Log3 $name, 4, "BadLuefter: ".$err;
+                    return $err;
+                }
+            }
             else {
                 return; # default attributes?
                 #return "BadLuefter_Attr: Unknown attr $attr_name";
@@ -452,76 +473,43 @@ my $element = $values[0];
 
 =begin html
 
-<a name="BadLuefter"></a>
-<h3>BadLuefter</h3>
-<ul>
-    <i>BadLuefter</i> implements the classical "BadLuefter World" as a starting point for module development. 
-    You may want to copy 98_BadLuefter.pm to start implementing a module of your very own. See 
-    <a href="http://wiki.fhem.de/wiki/DevelopmentModuleIntro">DevelopmentModuleIntro</a> for an 
-    in-depth instruction to your first module.
-    <br><br>
-    <a name="BadLuefterdefine"></a>
-    <b>Define</b>
-    <ul>
-        <code>define &lt;name&gt; BadLuefter &lt;greet&gt;</code>
-        <br><br>
-        Example: <code>define HELLO BadLuefter TurnUrRadioOn</code>
-        <br><br>
-        The "greet" parameter has no further meaning, it just demonstrates
-        how to set a so called "Internal" value. See <a href="http://fhem.de/commandref.html#define">commandref#define</a> 
-        for more info about the define command.
-    </ul>
-    <br>
-    
-    <a name="BadLuefterset"></a>
-    <b>Set</b><br>
-    <ul>
-        <code>set &lt;name&gt; &lt;option&gt; &lt;value&gt;</code>
-        <br><br>
-        You can <i>set</i> any value to any of the following options. They're just there to 
-        <i>get</i> them. See <a href="http://fhem.de/commandref.html#set">commandref#set</a> 
-        for more info about the set command.
-        <br><br>
-        Options:
-        <ul>
-              <li><i>satisfaction</i><br>
-                  Defaults to "no"</li>
-              <li><i>whatyouwant</i><br>
-                  Defaults to "can't"</li>
-              <li><i>whatyouneed</i><br>
-                  Defaults to "try sometimes"</li>
-        </ul>
-    </ul>
-    <br>
+<a name="BadLuefter"></a><h1>fhem_badluefter</h1>
 
-    <a name="BadLuefterget"></a>
-    <b>Get</b><br>
-    <ul>
-        <code>get &lt;name&gt; &lt;option&gt;</code>
-        <br><br>
-        You can <i>get</i> the value of any of the options described in 
-        <a href="#BadLuefterset">paragraph "Set" above</a>. See 
-        <a href="http://fhem.de/commandref.html#get">commandref#get</a> for more info about 
-        the get command.
-    </ul>
-    <br>
-    
-    <a name="BadLuefterattr"></a>
-    <b>Attributes</b>
-    <ul>
-        <code>attr &lt;name&gt; &lt;attribute&gt; &lt;value&gt;</code>
-        <br><br>
-        See <a href="http://fhem.de/commandref.html#attr">commandref#attr</a> for more info about 
-        the attr command.
-        <br><br>
-        Attributes:
-        <ul>
-            <li><i>formal</i> no|yes<br>
-                When you set formal to "yes", all output of <i>get</i> will be in a
-                more formal language. Default is "no".
-            </li>
-        </ul>
-    </ul>
+FHEM modul zur Kontrolle eines Badlüfters mit Hilfe eines Luftfeuchte Sensors. Der Actor (Schalter) wird über den Trend der Luftfeuchte Werte für eine kontrollierte Zeit eingeschaltet.
+
+Die Luftfeuchte wird vom Sensor periodisch abgefragt und in einer Liste gespeichert. Wenn die Luftfeuchte steigt, wird der Schalter mittel on-for-timer eingeschaltet.
+
+<h2>Definition</h2>
+
+<pre>
+define badluefter BadLuefter &lt;HumidityDevice&gt; &lt;HumidityReading&gt; &lt;SchalterDevice&gt;
+</pre>
+
+<h2>DefMod</h2>
+<pre>
+defmod badluefter BadLuefter HM_633ADB_Climate humidity schalterbadfeuchte2
+attr badluefter Interval 60
+attr badluefter room TEST
+
+setstate badluefter off
+setstate badluefter 2026-11-25 08:46:24 ValueList 75, 75, 75, 75, 75, 75, 75, 75, 75
+setstate badluefter 2026-11-25 08:46:24 state off
+setstate badluefter 2026-11-25 08:46:24 trend 0
+</pre>
+
+<h2>Set</h2>
+
+Unterstütze Set Befehle
+<ul> 
+<li>HumidityDevice  setzt den Sensor Namen, der gelesen werden soll</li>
+<li>HumidityReading  setzt den Reading Namen der gelesen werden soll</li>
+<li>SwitchDevice  setzt den Namen des Schalter Devices</li>
+</ul>
+<h2>Attribute</h2>
+<ul>
+<li>Interval  Zeit Interval in Sekunde für die periodische Abfrage, Default=60 Sekunden = 1 Minute</li>
+<li>on_time  Zeitdauer, die der Lüfter eingeschaltet werden soll. Default=300 Sekunden = 5 Minuten</li>
+<li>verbose  Verbose Level für Logging</li>
 </ul>
 
 =end html
