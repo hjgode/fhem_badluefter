@@ -35,5 +35,8 @@ attr HM_633ADB_Climate stateFormat Humidity=humidity
 define telnetPort telnet 7072 global
 setuuid telnetPort 6b02aba0-f33f-77f3-8c97-c342b61bc79c22df
 attr telnetPort room TEST
+
 define badluefter BadLuefter HM_633ADB_Climate humidity schalterbadfeuchte2
-setuuid badluefter 6b036605-f33f-77f3-4626-2dda777edbd01392
+setuuid badluefter 6b0489b8-f33f-77f3-3cde-c2e27f4454f8b941
+attr badluefter Interval 60
+attr badluefter room TEST
